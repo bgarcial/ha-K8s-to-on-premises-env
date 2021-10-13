@@ -140,8 +140,92 @@ those peerings are like a direct communication with either Azure cloud resources
     network into Azure. 
     - Those peerings are configured in the router on premises and the MSFT routers using redundant sessions
     of Border Gateway Protocols per peering. 
+    - Those peerings and the vpn failover scheme are considered as a [disaster recovery approach]( https://docs.microsoft.com/en-us/azure/expressroute/designing-for-disaster-recovery-with-expressroute-privatepeering)
 
 - Consider that there are [two main plans](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/expressroute#azure-expressroute), if costs are some kind of factor decision: 
     - In the Metered Data plan, all inbound data transfer is free. All outbound data transfer is charged based on a pre-determined rate.
     - The Unlimited Data plan in which all inbound and outbound data transfer is free. 
     Users are charged a fixed monthly port fee based on high availability dual ports. these plans pricing approaches
+
+#### Some challenges to consider:
+
+- We have to pick up a [telecommunications/connectivity provider to work with](https://docs.microsoft.com/en-us/azure/expressroute/expressroute-locations#partners) 
+in order to set up the dedicated channel and in that point things like routing and NAT (if we have internal IPs on on-premises networks) become kind of blurred to me 
+because that will depends on the provider.
+    - For sure, the network team from company get into action here. 
+- For VPN failover scheme, it requires redundant hardware (VPN appliances), and a redundant Azure VPN Gateway connection for which you pay charges.
+- Requires to setup Local Edges routers on customer side to connect with the Router telco provider and the and the 
+MSFT edge routers, creating in this way the Azure Router Express circuit that allow the communication on-premises to Azue cloud
+    - There are [many factors to consider here](https://marckean.com/2018/09/03/azure-expressroute-demystified/) which ones goes beyond of the scope of this assigment since has to do
+    with hardware and hard 1-3 layers networking knowledge.
+
+
+---
+
+### Hub Spoke Network Topology 
+
+- It was discarded, since I see as cons fact that every communication from spoke vnets has to cross via Hub Vnet
+to get on-premises network or even other vnets and that is not practical for the needs of performance and high 
+availability, also it is a common single of failure if the hub gets down.
+
+- Let's say many customers (dev teams or SRE/Infra teams at Tom Tom) have resources deployed in 
+different environments (DTAP). If those resources need to share services like DNS, AAD, or K8s clusters, 
+those services can be placed in the hub Vnet and every environment team will be a spoke Vnet, 
+but not sure if we got the desired performance and HA here.
+
+- I also saw we can use express route service in the hub Vnet, but the schema keeps forcing us to cross all 
+the communications via Hub, that is why I see Express Route more suitable.
+
+---
+
+#### TO CLARIFY
+
+Again, either Express Route and Express Route with VPN failover scheme are suitable options to
+pickup for designing this HA environment based on a kubernetes cluster to allow on-premises to cloud 
+connection. Any of those options can be selected according to demands of availability, being the Express Route with VPN failover which 
+presents more availability. Having said that this option will be the focus from now on forward since the
+assessment require to pickup **"<< the highest possible uptime and resilient system >>"**.
+
+
+## 2. Architecting the AKS cluster and on-premises communication
+
+![High level architecture deployment](https://cldup.com/jPECdvfyVA.png)
+
+The above diagram presents a high level view of the deploymnent in order to allow a
+communication between on-premises network and the Vnet where AKS cluster is.
+
+### Detailed Architecture Deployment
+
+
+
+![Detailing Express Route communication](https://cldup.com/aZPme3sfwM.png)
+
+---
+
+## 3. Deeping dive in Kubernetes deployment
+
+- RBAC enabled
+    - Specify the Roles and ClusterRoles to allow see a namespace and admin user on the cluster
+    with aad
+- Autoscaling
+- Virtual Nodes
+- K8s network policies
+    - Check how involves here the egress traffic.
+    While whitelisting is generally bad option, we would like to have teams pick 
+    option to use network policies.  
+    What I can mentioned here is enable calico network policy feature on aks, and describe
+    how will be the behavior for restricting egress traffic
+    https://docs.projectcalico.org/about/about-kubernetes-egress 
+    Lets assume that we do not need for this usecase. 
+
+- AAD integration
+- ACR multiregion? We are only one region, so we don't need a high available  ACR
+- AKS in three or 4 availability zones, specify this in a separate diagram.
+- HPA POD autoscaling with metrics collections by deploying prometheus for cpu/mem/disks
+and perhaps using custom metrics like requests counts of the app pods
+
+---
+
+## 4. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
+
+- needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
