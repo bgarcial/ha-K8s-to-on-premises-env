@@ -65,19 +65,23 @@ and execute specific gateway services which determine how the virtual network wi
 Ok, here basically the idea about get in charge of the routing traffic and connectivity to a couple of VMs to allow the communication
 is something that sounds at some point limited when it comes to scalability and performance.
 
-- The SKU plans for VPN gateway on Azure stack side, does not provide good vertical [scalability](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/vpn?tabs=portal#scalability-considerations).
+- The SKU plans for VPN gateway on Azure stack side, does not provide good vertical [scalability](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/vpn?tabs=portal#scalability-considerations).   
 
 - >For virtual networks that expect a large volume of VPN traffic, consider distributing the different 
 workloads into separate smaller virtual networks and configuring a VPN gateway for each of them.
 
 It means that require redesign of the Azure deployments I want to communicate if the traffic or demands of my
-environment grows. Let's say I want to upload files to a pvc and execute some calculations with that information from
-an application pod. 
+environment grows. 
+Let's say I want to upload large files to a pvc by splitting the process and/or execute 
+some calculations with that information from a backend application pod and publish the results
+on a frontend application.
 
-- For [availability](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/vpn?tabs=portal#availability-considerations) is necessary to implement redundancy of the on-premises VPN Gateway 
+- For [availability](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/vpn?tabs=portal#availability-considerations) 
+is necessary to implement redundancy of the on-premises VPN Gateway 
 
 Well, these were some of the reasons behind to discard it, but also VPN is considered more for connecting users
-from one network to another, and not for supporting a HA distributed operation system, at least not under
+from one network to another in order to access to services from an external place like if I were
+at the destination place, and not for supporting a HA distributed operation system, at least not under
 kubernetes workload context plus on-premises to cloud communication included.
 
 ---
