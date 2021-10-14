@@ -89,16 +89,20 @@ kubernetes workload context plus on-premises to cloud communication included.
 ### **Express Route connection** is one of the candidates to work with.
 
 This can be perfectly the option to pickup, it offers performance and scalability since this involves to
-work with a connectivity provider having a dedicated channel. For sure it also make it more complex to setup. 
-I discarded because there is a combination of its features with a VPN in a failover scheme, bringing this
-option more availability rather than Express Route onlying. 
+work with a connectivity provider having a dedicated channel. For sure it also make it more complex to set it up. 
 
-For [troubleshooting:](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/expressroute#troubleshooting)
->if a previously functioning ExpressRoute circuit now fails to connect, in the absence of any configuration 
-changes on-premises or within your private VNet, you may need to contact the connectivity provider and work 
-with them to correct the issue.
+I discard it, because Azure also has another option that consists  in a combination 
+of Express Route features with a VPN in a failover scheme, bringing this
+option more availability rather than Express Route alone. 
 
-If we combine this with a VPN solution, we will get some time to solve this problem without downtime
+- For [troubleshooting:](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/expressroute#troubleshooting)
+    >if a previously functioning ExpressRoute circuit now fails to connect, in the absence of any configuration 
+    changes on-premises or within your private VNet, you may need to contact the connectivity provider and work 
+    with them to correct the issue.
+
+    If we combine this with a VPN solution, we will get some time to solve this problem without downtime
+
+**NOTE**:
 
 However, if we make a balance, is not necessary to have this option accompanied for a VPN to choose it in our
 propose, I mean this can be perfectly the way to go, is just that the next option offer more availability
@@ -108,15 +112,18 @@ I will explain their benefits in the next option:
 
 ### Express Route with a site-to-site virtual private network (VPN) as a failover connection.
 
-This is the option I selected: 
+**This is the option I selected**: 
 
 Let's consider this option as similar to use Express Route alone, in terms of features, since the 
 traffic flows between the on-premises network and the Azure VNet through an ExpressRoute connection. 
-its main benefit is that if there is a loss of connectivity in the ExpressRoute circuit, 
-traffic is routed through an IPSec VPN tunnel, that is why it provides more availability than Express Route connection
+Its main benefit is that if there is a loss of connectivity in the ExpressRoute circuit, 
+traffic is routed through an IPSec VPN tunnel, that is why it provides more availability than Express Route connection.
 
-- >Note that if the ExpressRoute circuit is unavailable, the VPN route will only handle private peering connections. Public peering and Microsoft peering connections will pass over the Internet.
-[More info](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/expressroute-vpn-failover)
+- >Note that if the ExpressRoute circuit is unavailable, the VPN route will only handle private peering connections. 
+Public peering and Microsoft peering connections will pass over the Internet.
+
+    This is another availability mechanism that can provide maximum uptime of the network connectivity
+    [More info](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/expressroute-vpn-failover)
 
 Some of the reasons why I selected it:
 
