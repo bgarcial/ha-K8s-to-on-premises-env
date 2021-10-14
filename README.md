@@ -63,7 +63,7 @@ only covers the VPN gateway, and not the network connection to the gateway, so t
 and execute specific gateway services which determine how the virtual network will be used and the action to take.
 
 Ok, here basically the idea about get in charge of the routing traffic and connectivity to a couple of VMs to allow the communication
-is not something that sounds at some point limited when it comes to scalability and performance.
+is something that sounds at some point limited when it comes to scalability and performance.
 
 - The SKU plans for VPN gateway on Azure stack side, does not provide good vertical [scalability](https://docs.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/vpn?tabs=portal#scalability-considerations).
 
