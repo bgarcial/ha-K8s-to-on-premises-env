@@ -231,6 +231,7 @@ communication between on-premises network and the Vnet where AKS cluster is.
 
 - AAD integration
 - ACR multiregion? We are only one region, so we don't need a high available  ACR
+    - Maybe put it across the availability zones that the deployment will have
 - AKS in three or 4 availability zones, specify this in a separate diagram.
 - HPA POD autoscaling with metrics collections by deploying prometheus for cpu/mem/disks
 and perhaps using custom metrics like requests counts of the app pods
