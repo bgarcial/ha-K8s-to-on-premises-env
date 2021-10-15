@@ -215,6 +215,18 @@ communication between on-premises network and the Vnet where AKS cluster is.
 
 ## 3. Deeping dive in Kubernetes deployment
 
+### 3.1. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
+
+kEEP nin mind the end to end solution, not just the aks. I did it with the Express Route circuit,
+consider dependecy of aks with AAD. MAYBE i AM using a db for a stateless app. 
+Those SLAS should be the same or greater than AKS
+- AZ, in a region?
+    - deploy to at least two regions
+I want that level of resiliency in case of a natural disaster, i am not going to impact the other copy of my data
+
+
+### 3.2 Other K8s features
+
 - RBAC enabled
     - Specify the Roles and ClusterRoles to allow see a namespace and admin user on the cluster
     with aad
@@ -237,7 +249,3 @@ communication between on-premises network and the Vnet where AKS cluster is.
 and perhaps using custom metrics like requests counts of the app pods
 
 ---
-
-## 4. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
-
-- needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
