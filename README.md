@@ -197,25 +197,59 @@ connection. Any of those options can be selected according to demands of availab
 presents more availability. Having said that this option will be the focus from now on forward since the
 assessment require to pickup **"<< the highest possible uptime and resilient system >>"**.
 
+## TO CLARIFY 2
+https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#how-do-i-ensure-high-availability-on-a-virtual-network-connected-to-expressroute
+You can achieve high availability by connecting up to 4 ExpressRoute circuits in the same peering location 
+to your virtual network, or by connecting up to 16 ExpressRoute circuits in different peering locations 
+(for example, Singapore, Singapore2) to your virtual network. If one ExpressRoute circuit goes down, 
+connectivity will fail over to another ExpressRoute circuit. By default, traffic leaving your virtual 
+network is routed based on Equal Cost Multi-path Routing (ECMP). You can use Connection Weight 
+to prefer one circuit to another. For more information, see Optimizing ExpressRoute Routing.
+
 
 ## 2. Architecting the AKS cluster and on-premises communication
 
-![High level architecture deployment](https://cldup.com/jPECdvfyVA.png)
-
-The above diagram presents a high level view of the deploymnent in order to allow a
+The following diagram presents a high level view of the deployment in order to allow a
 communication between on-premises network and the Vnet where AKS cluster is.
 
-### Detailed Architecture Deployment
+![High level architecture deployment](https://cldup.com/jPECdvfyVA.png)
 
 
+### 2.1 Detailing Express Route communication and K8s RBAC namespace-cluster restrictions
 
-![Detailing Express Route communication](https://cldup.com/aZPme3sfwM.png)
+![Detailing Express Route communication](https://cldup.com/QP4NfAEqgg.png)
+
+
+Regarding access control from users to the kubernetes cluster, in order a regular user 
+can get access only to a `dev` namespace and other user get the admin cluster role, the Kubernetes
+cluster should be created with RBAC enabled in order to work with `Role`, `ClusterRole`, `RoleBinding`
+and `ClusterRoleBinding` resources. 
+
+In addition we will take in advance of the Azure Active Directory Integration such as follow: 
+- Two AAD groups will be created: 
+    - `Namespace-DEV`
+    - Admin-Users
+
+- We will get the AKS ID cluster and the AAD groups objectId's, and with those IDs, we will create
+role assignments for the `Namespace-DEV` and `Admin-Users` groups, so any members of those groups can
+interact with the cluster according to the permissions assigned later on by using RBAC on K8s
+
+- We will create the namespace `dev``
+- Create `Role` K8s resource for `dev` namespace, to grant full permissions to the namespace
+- Get the resource id for the `Namespace-DEV` AAD group, this group will be set as a the 
+subject of the 
+- Create the `RoleBinding` for `Namespace-DEV` AAD group using the previously `Role` K8s resource created
+for namespace access. We will use here the groupObjectId from the `Namespace-DEV` AAD group
+
+
 
 ---
 
 ## 3. Deeping dive in Kubernetes deployment
 
-### 3.1. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
+### 3.1
+
+### 3.2. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
 
 kEEP nin mind the end to end solution, not just the aks. I did it with the Express Route circuit,
 consider dependecy of aks with AAD. MAYBE i AM using a db for a stateless app. 
@@ -224,8 +258,21 @@ Those SLAS should be the same or greater than AKS
     - deploy to at least two regions
 I want that level of resiliency in case of a natural disaster, i am not going to impact the other copy of my data
 
+I wanted to propose a Multiregion deployment with two clusters in westeurope and northeurope and use
+traffic manager, that is possible, but since we are using Express Route, I think is not possible
+to put them to work all together. Traffic Manager is a DNS LB and makes use of endpoints to be exposed
+in order to contact a target to be redirected, but Express Route involves to get a Gateway in the Vnet
+destiny, so, I will have to in some how expose an endpoint of express route gateway or circuit in order
+Traffic manager can redirect a connection attempt from onpremises network. Being Traffic Manager operating
+under layer 7 application and Express Route between 2-5 layers, I thonk is not possible to work with both
+In addition, i didn't find something similar in the documentation.
+That is why I decided to use just one cluster with 3 availability zones across westeurope region and the following features
 
-### 3.2 Other K8s features
+
+![](https://cldup.com/y7v0IZCyJ5.png)
+
+
+### 3.3 Other K8s features
 
 - RBAC enabled
     - Specify the Roles and ClusterRoles to allow see a namespace and admin user on the cluster
