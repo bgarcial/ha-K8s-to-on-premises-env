@@ -215,12 +215,12 @@ is also useful when hybrid communications takes place.
 The following diagram presents a high level view of the deployment in order to allow a
 communication between on-premises network and the Vnet where AKS cluster is.
 
-![High level architecture deployment](https://cldup.com/jPECdvfyVA.png)
+![High level architecture deployment](https://cldup.com/8Go9-tRtj5.png)
 
 
-### 2.1 Detailing Express Route communication and K8s RBAC namespace-cluster restrictions
+### 2.1 Detailing Express Route Circuit and K8s RBAC namespace-cluster restrictions
 
-![Detailing Express Route communication](https://cldup.com/QP4NfAEqgg.png)
+![Detailing Express Route communication](https://cldup.com/BYPfgfRhLJ.png)
 
 
 Regarding access control from users to the kubernetes cluster, as the number of cluster nodes, 
@@ -617,21 +617,148 @@ use `kubectl` to interact with the cluster by granting them the `Azure Kubernete
         pod/nginx-dev   1/1     Running   0          8m26s
         ```
 
-
-
-
-
-
-
-
-
 ---
 
 ## 3. Deeping dive in Kubernetes deployment
 
-### 3.1
+### 3.1. AKS Features to include
 
-### 3.2. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
+In order to fullfil the scalability, fine grained access control, availability for the cluster and the container registry,
+the cluster should be deployed with the following features:
+
+- RBAC enabled
+
+- [Azure Active Directory Integration](https://docs.microsoft.com/en-us/azure/aks/managed-aad#before-you-begin) enabled.
+
+- Managed Identities With it, we don't need to authenticate to azure with a service principal created previously, and we avoid keeping an eye on when service principal client secrets expire.
+Having a managed identity, we could use it to create role assignments over other azure services like Vnet (as I am doing it below), KeyVault and SQL instances, ACR, etcetera
+
+- 3 Availability Zones: This will allow distribute the AKS nodes [in multiple zones](https://docs.microsoft.com/en-us/azure/aks/availability-zones) in order to have failure tolerance 
+3 Zones is a good practice, just in case 1 fail, the cluster keeps at least 2.
+
+- Virtual Machines Scale sets, they are mandatory when working with Availability Zones. 
+These VMs are created across different fault domains into an Availability zone, providing redundant power, cooling, and networking  
+
+- Standard SKU Load Balancer to distribute request across Virtual Machines Scale sets
+
+- Autoscaling: The cluster will be created with at least 2 nodepools and when possible, the applications will be deployed on user nodepools and not
+on the system nodepool. 
+    - Horizontal Pod Autoscaling for increasing/decreasing the number of replicas.
+        - We can use here metrics like cpu or memory and define an `HorizontalPodAutoscaler` resource. But we can also create custom metrics and using
+        something like Prometheus, to scrappe them and scale for example based on [requests counts](https://prometheus.io/docs/concepts/metric_types/#counter)   
+    - Nodes autoscaling assigning `min_count` and `max_count` parameters 
+    - Enabling Autoscaler on every individual nodepool - Check [here](https://docs.microsoft.com/en-us/azure/aks/cluster-autoscaler#use-the-cluster-autoscaler-with-multiple-node-pools-enabled):
+      AKS cluster can autoscale nodes, but also we can add dynamically node pools as long they can be required.
+      
+      An example approach (not tested) is the way the `azurerm_kubernetes_cluster_node_pool` [in terraform](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/kubernetes_cluster_node_pool)
+      where we can define the parameters for a new nodepool and then there we can use a map object to define as much nodepools as we want:
+
+      ```
+      resource "azurerm_kubernetes_cluster_node_pool" "aks_main" {
+          
+        for_each = var.additional_node_pools
+        kubernetes_cluster_id = azurerm_kubernetes_cluster.aks_main.id
+        name = "internal"
+        orchestrator_version = var.k8s_version
+        node_count = each.value.node_count
+        vm_size = each.value.vm_size
+        availability_zones = each.value.zones
+        max_pods              = 250
+        os_disk_size_gb       = 128
+        os_type               = each.value.node_os
+        vnet_subnet_id        = azurerm_subnet.aks.id
+        node_labels           = each.value.labels
+        enable_auto_scaling   = each.value.cluster_auto_scaling
+        min_count             = each.value.cluster_auto_scaling_min_count
+        max_count             = each.value.cluster_auto_scaling_max_count
+      }
+      ```
+      ```
+      variable "additional_node_pools" {
+        description = "The map object to configure one or several additional node pools with number of worker nodes, worker node VM size and Availability Zones."
+        type = map(object({
+          node_count                     = number
+          vm_size                        = string
+          zones                          = list(string)
+          labels                         = map(string)
+          # taints                         = list(string)
+          node_os                        = string
+          cluster_auto_scaling           = bool
+          cluster_auto_scaling_min_count = number
+          cluster_auto_scaling_max_count = number
+        }))
+      }
+      ```
+      This will be the object map defined to setup additional node pools or user node pools it could have between zero and 10. 
+      
+      This constitute how a new node pool addition looks like when it could be required.
+
+      ```
+      additional_node_pools = {
+          pool3 = {
+          node_count = 1
+          vm_size    = "Standard_F2s_v2"
+          zones      = ["1", "2", "3"]
+          labels = {
+            environment = "Prod"
+            size = "Medium"
+          }
+          node_os    = "Linux"
+          # taints = [
+          #    "kubernetes.io/os=windows:NoSchedule"
+          # ]
+          cluster_auto_scaling           = true
+          cluster_auto_scaling_min_count = 1
+          cluster_auto_scaling_max_count = 10
+        }
+      }
+    ```
+
+- Or maybe we can think about [virtual nodes](https://www.youtube.com/watch?v=nZWtPF8N8R4) if we don't want to
+deal with adding nodepools to get extra capacity, it also brings fast provisioning when needed. We can add to the pod application
+a toleration to say 
+
+
+- The ability to [taint nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#concepts) according policies or metrics
+when we don't want specific pods on nodes. For example we have apps doing heavy processing jobs and other normal operations, may be we want to get away
+the normal ones from nodes with high performance hardware.   
+
+
+- Logs Analytics Workspaces and Container Insights (Optional): This is [monitoring for containers](https://docs.microsoft.com/en-gb/azure/azure-monitor/containers/container-insights-overview) 
+in order to track nodes, disks, CPUs. It is not entirely required, it will depends of the observability
+strategy for metrics, logs and tracing collections and tools used. 
+
+
+- Azure CNI Network Plugin
+    - Allow us to make the pods accessible from on premises network when using Express Route
+    - It is required to integrate additional nodepools or virtual nodes
+    - Pods and services gets a private IP of the Vnet.
+    - We avoid to use NAT to route traffic between pods and nodes (different logical namespace)
+
+- K8s network policies
+    Azure policies for AKS enabled. It can improve security on pods, restrict access from ip ranges to API, nodes, do not allow privileged containers
+    https://docs.microsoft.com/en-us/azure/aks/policy-reference built-in policies 
+    - Check how involves here the egress traffic.
+    While whitelisting is generally bad option, we would like to have teams pick 
+    option to use network policies.  
+    What I can mentioned here is enable calico network policy feature on aks, and describe
+    how will be the behavior for restricting egress traffic
+    https://docs.projectcalico.org/about/about-kubernetes-egress 
+    Lets assume that we do not need for this usecase. 
+
+
+### 3.2. ACR geo-replication and/or availability zones
+- Despite the team is located in one region, we can [replicate the container registry data](https://docs.microsoft.com/en-us/azure/container-registry/container-registry-geo-replication) 
+to a close region for fast pulling and resiliency. Each push is automatically place across regions.  
+
+- But if we just want to use a region, we can put the ACR acros the Availability zones in that region
+We are only one region, so we don't need a high available  ACR
+    - Maybe put it across the availability zones that the deployment will have
+ 
+
+![](https://cldup.com/Ti__gOPZ3v.png)
+
+### 3.3. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
 
 kEEP nin mind the end to end solution, not just the aks. I did it with the Express Route circuit,
 consider dependecy of aks with AAD. MAYBE i AM using a db for a stateless app. 
@@ -663,25 +790,6 @@ https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#i-have-mor
 
 ### 3.3 Other K8s features
 
-- RBAC enabled
-    - Specify the Roles and ClusterRoles to allow see a namespace and admin user on the cluster
-    with aad
-- Autoscaling
-- Virtual Nodes
-- K8s network policies
-    - Check how involves here the egress traffic.
-    While whitelisting is generally bad option, we would like to have teams pick 
-    option to use network policies.  
-    What I can mentioned here is enable calico network policy feature on aks, and describe
-    how will be the behavior for restricting egress traffic
-    https://docs.projectcalico.org/about/about-kubernetes-egress 
-    Lets assume that we do not need for this usecase. 
-
-- AAD integration
-- ACR multiregion? We are only one region, so we don't need a high available  ACR
-    - Maybe put it across the availability zones that the deployment will have
-- AKS in three or 4 availability zones, specify this in a separate diagram.
-- HPA POD autoscaling with metrics collections by deploying prometheus for cpu/mem/disks
-and perhaps using custom metrics like requests counts of the app pods
+- 
 
 ---
