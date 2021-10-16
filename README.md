@@ -189,22 +189,25 @@ the communications via Hub, that is why I see Express Route more suitable.
 
 ---
 
-#### TO CLARIFY
+#### Express Route variants - To Clarify / consider 
 
+I consider opportune to highlight some Express Route implementation variants.
 Again, either Express Route and Express Route with VPN failover scheme are suitable options to
 pickup for designing this HA environment based on a kubernetes cluster to allow on-premises to cloud 
-connection. Any of those options can be selected according to demands of availability, being the Express Route with VPN failover which 
-presents more availability. Having said that this option will be the focus from now on forward since the
-assessment require to pickup **"<< the highest possible uptime and resilient system >>"**.
+connection.
 
-## TO CLARIFY 2
-https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#how-do-i-ensure-high-availability-on-a-virtual-network-connected-to-expressroute
-You can achieve high availability by connecting up to 4 ExpressRoute circuits in the same peering location 
+In addition ER offers a third option, the possibility of achieve high availability 
+[by creating various circuits](https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#how-do-i-ensure-high-availability-on-a-virtual-network-connected-to-expressroute)
+which ones will be operating in the communication between the Vnet and the on-premises network(s):
+
+>You can achieve high availability by connecting up to 4 ExpressRoute circuits in the same peering location 
 to your virtual network, or by connecting up to 16 ExpressRoute circuits in different peering locations 
 (for example, Singapore, Singapore2) to your virtual network. If one ExpressRoute circuit goes down, 
-connectivity will fail over to another ExpressRoute circuit. By default, traffic leaving your virtual 
-network is routed based on Equal Cost Multi-path Routing (ECMP). You can use Connection Weight 
-to prefer one circuit to another. For more information, see Optimizing ExpressRoute Routing.
+connectivity will fail over to another ExpressRoute circuit ...
+
+So we even can achieve HA without set up a VPN. Any of those options can be selected according to demands of availability. 
+I selected Express Route with VPN failover as a solution that in addition to connectivity brings a VPN, which in most cases
+is also useful when hybrid communications takes place.
 
 
 ## 2. Architecting the AKS cluster and on-premises communication
@@ -220,26 +223,405 @@ communication between on-premises network and the Vnet where AKS cluster is.
 ![Detailing Express Route communication](https://cldup.com/QP4NfAEqgg.png)
 
 
-Regarding access control from users to the kubernetes cluster, in order a regular user 
-can get access only to a `dev` namespace and other user get the admin cluster role, the Kubernetes
+Regarding access control from users to the kubernetes cluster, as the number of cluster nodes, 
+applications, and team members increases, we might want to limit the resources the team members 
+and applications can access, as well as the actions they can take. 
+In order a regular user can get access only to a `dev` namespace and other user get the admin cluster role, the Kubernetes
 cluster should be created with RBAC enabled in order to work with `Role`, `ClusterRole`, `RoleBinding`
 and `ClusterRoleBinding` resources. 
 
-In addition we will take in advance of the Azure Active Directory Integration such as follow: 
+In addition we will take in advance of the [Azure Active Directory Integration](https://docs.microsoft.com/en-us/azure/aks/managed-aad) to use 
+AAD as identity provider such as follow:
+
+- Keeping in mind future users to be added, we will use an AAD group membership 
+approach, where:
+
 - Two AAD groups will be created: 
-    - `Namespace-DEV`
-    - Admin-Users
+    - **`Namespace-DEV`**:
+        ```
+        > NAMESPACE_DEV_ID_AAD_GROUP=$(az ad group create --display-name Namespace-DEV --mail-nickname appdev --query objectId -o tsv)
+        ```
+        So we got the AAD groupId:
+        ```
+        echo $NAMESPACE_DEV_ID_AAD_GROUP
+        e5b4617b-b318-47f2-90fa-ea06f5964d20
+        ```
 
-- We will get the AKS ID cluster and the AAD groups objectId's, and with those IDs, we will create
-role assignments for the `Namespace-DEV` and `Admin-Users` groups, so any members of those groups can
-interact with the cluster according to the permissions assigned later on by using RBAC on K8s
+    - **`AKS-Admin-Users`**:
+        ```
+        > AKS_ADMIN_USERS_ID_AAD_GROUP=$(az ad group create --display-name AKS-Admin-Users --mail-nickname appdev --query objectId -o tsv)
+        ```
+        We got the AAD groupId
+        ```
+        > echo $AKS_ADMIN_USERS_ID_AAD_GROUP
+        c007d29b-e404-4b54-b37e-c2ca955f38ac
+        ```
+    If we go to Azure portal we can see the groups created:
+    ![](https://cldup.com/Gm8iHzXjUH.png)
 
-- We will create the namespace `dev``
-- Create `Role` K8s resource for `dev` namespace, to grant full permissions to the namespace
-- Get the resource id for the `Namespace-DEV` AAD group, this group will be set as a the 
-subject of the 
-- Create the `RoleBinding` for `Namespace-DEV` AAD group using the previously `Role` K8s resource created
-for namespace access. We will use here the groupObjectId from the `Namespace-DEV` AAD group
+- We get the AKS ID cluster:
+  ```
+  > AKS_ID=$(az aks show \
+    --resource-group test-aks \
+    --name test \
+    --query id -o tsv)
+  ```  
+  Basically this is the Resource ID of the cluster which can also be gotten on azure portal.
+  ```
+  > echo $AKS_ID
+  /subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/resourcegroups/test-aks/providers/Microsoft.ContainerService/managedClusters/test
+  ```
+
+- Create a role assignment for the `Namespace-DEV` AAD group, to let any member of the group
+use `kubectl` to interact with the cluster by granting them the `Azure Kubernetes Service Cluster User Role`
+    ```
+    > az role assignment create \
+        --assignee $NAMESPACE_DEV_ID_AAD_GROUP \
+        --role "Azure Kubernetes Service Cluster User Role"  \
+        --scope $AKS_ID
+        {
+            "canDelegate": null,
+            "condition": null,
+            "conditionVersion": null,
+            "description": null,
+            "id": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/resourcegroups/test-aks/providers/Microsoft.ContainerService/managedClusters/test/providers/Microsoft.Authorization/roleAssignments/b40b05fa-ebcc-4138-8ca2-02143c88bf9c",
+            "name": "b40b05fa-ebcc-4138-8ca2-02143c88bf9c",
+            "principalId": "e5b4617b-b318-47f2-90fa-ea06f5964d20",
+            "principalType": "Group",
+            "resourceGroup": "test-aks",
+            "roleDefinitionId": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/providers/Microsoft.Authorization/roleDefinitions/4abbcc35-e782-43d8-92c5-2d3f1bd2253f",
+            "scope": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/resourcegroups/test-aks/providers/Microsoft.ContainerService/managedClusters/test",
+            "type": "Microsoft.Authorization/roleAssignments"
+        }
+    ```
+    If we go to azure portal we can see the role created for this AAD group
+    ![](https://cldup.com/SpqQBI8ve4.png)
+
+- Create a role assignment for the `AKS-Admin-Users` AAD group, to let any member of the group
+use `kubectl` to interact with the cluster by granting them the `Azure Kubernetes Service RBAC Cluster Admin `
+    ```
+    > az role assignment create \
+        --assignee $AKS_ADMIN_USERS_ID_AAD_GROUP \
+        --role "Azure Kubernetes Service RBAC Cluster Admin"  \
+        --scope $AKS_ID
+        {
+            "canDelegate": null,
+            "condition": null,
+            "conditionVersion": null,
+            "description": null,
+            "id": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/resourcegroups/test-aks/providers/Microsoft.ContainerService/managedClusters/test/providers/Microsoft.Authorization/roleAssignments/18a7021c-2799-4de2-a4d2-e4e5842977b0",
+            "name": "18a7021c-2799-4de2-a4d2-e4e5842977b0",
+            "principalId": "c007d29b-e404-4b54-b37e-c2ca955f38ac",
+            "principalType": "Group",
+            "resourceGroup": "test-aks",
+            "roleDefinitionId": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/providers/Microsoft.Authorization/roleDefinitions/b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b",
+            "scope": "/subscriptions/9148bd11-f32b-4b5d-a6c0-5ac5317f29ca/resourcegroups/test-aks/providers/Microsoft.ContainerService/managedClusters/test",
+            "type": "Microsoft.Authorization/roleAssignments"
+        }
+    ```
+    If we go to Azure portal we can see the role:
+    ![](https://cldup.com/tvKyh1Vu7l.png)
+
+- Creating AAD Users to be used to sign in to the AKS cluster:
+    - Creating AKS Dev (`devuser@bgarcialoutlook.onmicrosoft.com`) user: 
+        ```
+        > echo "Please enter the UPN for application developers: " && read AAD_DEV_UPN
+        Please enter the UPN for application developers:
+        devuser@bgarcialoutlook.onmicrosoft.com
+        ```
+        ```
+        > echo "Please enter the secure password for application developers: " && read AAD_DEV_PW
+        Please enter the secure password for application developers:
+        mypasswd2021*
+        ```
+        ```
+        DEV_USER_ID=$(az ad user create \
+            --display-name "AKS Dev" \
+            --user-principal-name $AAD_DEV_UPN \
+            --password $AAD_DEV_PW \
+            --query objectId -o tsv)
+        ```
+        ```
+        > echo $DEV_USER_ID
+        877d014f-cddb-4b2a-ad4f-2f0425b465bd
+        ```
+
+    - Adding AKS Dev (`devuser@bgarcialoutlook.onmicrosoft.com`) user to `Namespace-DEV` AAD group
+        ```
+        > az ad group member add --group Namespace-DEV --member-id $DEV_USER_ID
+        ```
+        The user was added to the AAD group
+        ![](https://cldup.com/WcELfJa7UK.png)
+    
+    
+    - Creating Ops (`opsuser@bgarcialoutlook.onmicrosoft.com`) user:
+        ```
+        > echo "Please enter the UPN for SREs: " && read AAD_OPS_UPN
+        Please enter the UPN for OPS:
+        opsuser@bgarcialoutlook.onmicrosoft.com
+        ```
+        ```
+        > echo "Please enter the secure password for SREs: " && read AAD_OPS_PW
+        Please enter the secure password for SREs:
+        mypassword2021*
+        ```
+        ```
+        > # Create a user for the SRE role
+            OPS_USER_ID=$(az ad user create \
+            --display-name "AKS Ops" \
+            --user-principal-name $AAD_OPS_UPN \
+            --password $AAD_OPS_PW \
+            --query objectId -o tsv)
+        ```
+        ```
+        > echo $OPS_USER_ID
+        32d390c2-0b59-4ecb-bd8a-55621272ce16
+        ```
+    - Adding Ops (`opsuser@bgarcialoutlook.onmicrosoft.com`) user to `AKS-Admin-Users` AAD group:
+        ```
+        > az ad group member add --group AKS-Admin-Users --member-id $OPS_USER_ID
+        ```
+- **Testing the access to the cluster resources:**    
+    - Get the cluster admin credentials:
+        ```
+        # This command will use the credentials of your normal daily basis work user on Azure (no the above created)
+        az aks get-credentials --resource-group myResourceGroup --name myAKSCluster --admin
+        ``` 
+    - Create `dev` namespace
+        ```
+        > k create ns dev
+        + kubectl create ns dev
+        namespace/dev created
+        ```
+        ```
+        > kgnsall
+        + kubectl get namespaces --all-namespaces
+        NAME              STATUS   AGE
+        calico-system     Active   3h3m
+        default           Active   3h4m
+        dev               Active   7s
+        kube-node-lease   Active   3h4m
+        kube-public       Active   3h4m
+        kube-system       Active   3h4m
+        tigera-operator   Active   3h4m
+        ```
+    - Now create a `Role` for `dev` namespace: It is the Role which will allow access only to `dev` ns.
+      
+        ```
+        # role-dev-namespace.yaml
+        kind: Role
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: dev-user-full-access
+          namespace: dev
+        rules:
+        - apiGroups: ["", "extensions", "apps"]
+          resources: ["*"]
+          verbs: ["*"]
+        - apiGroups: ["batch"]
+          resources:
+          - jobs
+          - cronjobs
+          verbs: ["*"]
+        ```
+        ```
+        > ka role-dev-namespace.yaml
+        + kubectl apply --recursive -f role-dev-namespace.yaml
+        role.rbac.authorization.k8s.io/dev-user-full-access created   
+        ```
+        So far we are adding all the verbs or actions (`*`).  If you want to assign just `read-write` access consider to use:
+        ```
+        verbs:
+        - get
+        - list
+        - watch
+        - create
+        - update
+        - patch
+        - delete
+        ```
+    - Now, create a `RoleBinding` to associate the previous `Role` to the `Namespace-DEV` AAD group.
+    So first get the `Namespace-DEV` AAD groupObjectId:
+        ```
+        > az ad group show --group Namespace-DEV --query objectId -o tsv
+        e5b4617b-b318-47f2-90fa-ea06f5964d20
+        ```
+    - Create the `RoleBinding` and use that groupObjectId
+
+        ```
+        kind: RoleBinding
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: dev-user-access
+          namespace: dev
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: dev-user-full-access
+        subjects:
+        - kind: Group
+          namespace: dev
+          name: e5b4617b-b318-47f2-90fa-ea06f5964d20 # groupObjectId      
+        ```
+        ```
+        > ka rolebinding-dev-namespace.yaml
+        + kubectl apply --recursive -f rolebinding-dev-namespace.yaml
+        rolebinding.rbac.authorization.k8s.io/dev-user-access created
+        ```
+    - Now create a `ClusterRole`: It is the ClusterRole which will allow access to the entire cluster.
+        ```
+        kind: ClusterRole
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: ops-user-full-access
+        rules:
+        - apiGroups: ["", "extensions", "apps"]
+          resources: ["*"]
+          verbs: ["*"]
+        - apiGroups: ["batch"]
+          resources:
+        - jobs
+        - cronjobs
+        verbs: ["*"]
+        ```
+        ```
+        > ka cluster-role-ops.yaml
+        + kubectl apply --recursive -f cluster-role-ops.yaml
+        clusterrole.rbac.authorization.k8s.io/ops-user-full-access created
+        ```
+    - Now, create a `ClusterRoleBinding` to associate the previous `ClusterRole` to the `AKS-Admin-Users` AAD group.
+    So first get the `AKS-Admin-Users` AAD groupObjectId:
+        ```
+        > az ad group show --group AKS-Admin-Users --query objectId -o tsv
+        c007d29b-e404-4b54-b37e-c2ca955f38ac
+        ```
+    - Create the `ClusterRoleBinding` and use that groupObjectId
+        ```
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: ops-user-full-access-binding
+        roleRef:
+          kind: ClusterRole
+          name: ops-user-full-access
+          apiGroup: rbac.authorization.k8s.io
+        subjects:
+        - kind: Group
+          name: c007d29b-e404-4b54-b37e-c2ca955f38ac # groupObjectId
+          apiGroup: rbac.authorization.k8s.io
+        ```
+        ```
+        > ka cluster-role-binding-ops.yaml
+        + kubectl apply --recursive -f cluster-role-binding-ops.yaml
+        clusterrolebinding.rbac.authorization.k8s.io/ops-user-full-access-binding created
+        ```
+- **Interacting with the cluster using AKS Dev (`devuser@bgarcialoutlook.onmicrosoft.com`) identity:**
+  
+  Let's remember this user only has access to `dev` namespace
+  
+  - Reset the credentials of the cluster 
+    ```
+    > az aks get-credentials --resource-group test-aks --name test --overwrite-existing
+    The behavior of this command has been altered by the following extension: aks-preview
+    Merged "test" as current context in /Users/bgarcial/.kube/config
+    ```
+  - Create an NGINX pod on `dev` ns. The cluster will require the AAD credentials
+    ```
+    > kubectl run nginx-dev --image=mcr.microsoft.com/oss/nginx/nginx:1.15.5-alpine --namespace dev
+    + kubectl run nginx-dev --image=mcr.microsoft.com/oss/nginx/nginx:1.15.5-alpine --namespace dev
+    To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code DAZ9UTXEE to authenticate.
+    ```
+    Enter the code and check:
+    ![](https://cldup.com/CUZzrKaDPM.png)
+    ![](https://cldup.com/Wzmc2o-7TP.png)
+    
+    The pod was created.
+    ```
+    > kubectl run nginx-dev --image=mcr.microsoft.com/oss/nginx/nginx:1.15.5-alpine --namespace dev
+    + kubectl run nginx-dev --image=mcr.microsoft.com/oss/nginx/nginx:1.15.5-alpine --namespace dev
+    pod/nginx-dev created
+    ```
+  - List `kube-system` namespace resources. It shouldn't be possible.
+    ```
+    > k get pods,deploy,svc  -n kube-system
+    + kubectl get pods,deploy,svc -n kube-system
+    Error from server (Forbidden): pods is forbidden: User "devuser@bgarcialoutlook.onmicrosoft.com" cannot list resource "pods" in API group "" in the namespace "kube-system"
+    Error from server (Forbidden): deployments.apps is forbidden: User "devuser@bgarcialoutlook.onmicrosoft.com" cannot list resource "deployments" in API group "apps" in the namespace "kube-system"
+    Error from server (Forbidden): services is forbidden: User "devuser@bgarcialoutlook.onmicrosoft.com" cannot list resource "services" in API group "" in the namespace "kube-system"
+    ```
+
+- **Interacting with the cluster using AKS Ops (`opsuser@bgarcialoutlook.onmicrosoft.com`) identity:**
+  
+  Let's remember this user has access to the entire cluster
+  
+  - Reset the credentials of the cluster 
+    ```
+    > az aks get-credentials --resource-group test-aks --name test --overwrite-existing
+    The behavior of this command has been altered by the following extension: aks-preview
+    Merged "test" as current context in /Users/bgarcial/.kube/config
+    ```
+    - List `kube-system` ns:
+        ```
+        > k get pods,deploy,svc  -n kube-system
+        + kubectl get pods,deploy,svc -n kube-system
+        To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code D7N7ZVD5G to authenticate.
+        ```
+        ![](https://cldup.com/yx5p7x-sie.png)
+        ![](https://cldup.com/_7F-2Bu8kJ.png)
+
+        We can see all the resources requested were listed:
+        ```
+        > k get pods,deploy,svc  -n kube-system
+        + kubectl get pods,deploy,svc -n kube-system
+        To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code D7N7ZVD5G to authenticate.
+        NAME                                       READY   STATUS    RESTARTS   AGE
+        pod/aci-connector-linux-7dc49975b4-bzvw7   1/1     Running   3          4h18m
+        pod/azure-ip-masq-agent-4rj4q              1/1     Running   0          4h17m
+        pod/azure-ip-masq-agent-9b9vf              1/1     Running   0          4h18m
+        pod/azure-ip-masq-agent-vkltr              1/1     Running   0          4h18m
+        pod/coredns-autoscaler-54d55c8b75-v26sr    1/1     Running   0          4h18m
+        pod/coredns-d4866bcb7-6p245                1/1     Running   0          4h16m
+        pod/coredns-d4866bcb7-d6qsr                1/1     Running   0          4h16m
+        pod/coredns-d4866bcb7-fmcnz                1/1     Running   0          4h17m
+        pod/coredns-d4866bcb7-mhdct                1/1     Running   0          4h18m
+        pod/coredns-d4866bcb7-vfm87                1/1     Running   0          4h16m
+        pod/kube-proxy-j8csv                       1/1     Running   0          4h18m
+        pod/kube-proxy-sdgzk                       1/1     Running   0          4h17m
+        pod/kube-proxy-t7phr                       1/1     Running   0          4h18m
+        pod/metrics-server-569f6547dd-kwlrp        1/1     Running   0          4h18m
+        pod/omsagent-dvndb                         2/2     Running   0          4h18m
+        pod/omsagent-qf9pq                         2/2     Running   0          4h18m
+        pod/omsagent-rn94f                         2/2     Running   0          4h17m
+        pod/omsagent-rs-6cdd976f5c-d85pc           1/1     Running   0          4h18m
+        pod/tunnelfront-576dfb478f-4tmng           1/1     Running   0          4h18m
+
+        NAME                                  READY   UP-TO-DATE   AVAILABLE   AGE
+        deployment.apps/aci-connector-linux   1/1     1            1           4h18m
+        deployment.apps/coredns               5/5     5            5           4h18m
+        deployment.apps/coredns-autoscaler    1/1     1            1           4h18m
+        deployment.apps/metrics-server        1/1     1            1           4h18m
+        deployment.apps/omsagent-rs           1/1     1            1           4h18m
+        deployment.apps/tunnelfront           1/1     1            1           4h18m
+
+        NAME                                     TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)         AGE
+        service/healthmodel-replicaset-service   ClusterIP   10.0.95.152   <none>        25227/TCP       4h18m
+        service/kube-dns                         ClusterIP   10.0.0.10     <none>        53/UDP,53/TCP   4h18m
+        service/metrics-server                   ClusterIP   10.0.76.27    <none>        443/TCP         4h18m
+        ```
+
+        - Even we can check `dev` ns:
+        ```
+        > k get pods,deploy,svc  -n dev
+        + kubectl get pods,deploy,svc -n dev
+        NAME            READY   STATUS    RESTARTS   AGE
+        pod/nginx-dev   1/1     Running   0          8m26s
+        ```
+
+
+
+
+
+
 
 
 
@@ -260,14 +642,21 @@ I want that level of resiliency in case of a natural disaster, i am not going to
 
 I wanted to propose a Multiregion deployment with two clusters in westeurope and northeurope and use
 traffic manager, that is possible, but since we are using Express Route, I think is not possible
-to put them to work all together. Traffic Manager is a DNS LB and makes use of endpoints to be exposed
-in order to contact a target to be redirected, but Express Route involves to get a Gateway in the Vnet
-destiny, so, I will have to in some how expose an endpoint of express route gateway or circuit in order
+to put them to work all together. 
+Indeed is possible use Express Route to redirect or receive traffic from Vnets located in 
+different regions ([by implementing circuits in each of them](https://docs.microsoft.com/en-us/azure/expressroute/expressroute-optimize-routing#suboptimal-routing-between-virtual-networks)) 
+being Traffic Manager a DNS LB and makes use of endpoints to be exposed in order to contact a target 
+to be redirected, and being Express Route a technology that demands involves a Gateway in the cloud Vnet target 
+is not clear for me how to put them to talk each other under networking protocol layer perspective.
+
+
+I will have in some how expose an endpoint of express route gateway or circuit in order
 Traffic manager can redirect a connection attempt from onpremises network. Being Traffic Manager operating
 under layer 7 application and Express Route between 2-5 layers, I thonk is not possible to work with both
 In addition, i didn't find something similar in the documentation.
 That is why I decided to use just one cluster with 3 availability zones across westeurope region and the following features
-
+Maybe express route global can helps here toconnect to more than 1 on premises network
+https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#i-have-more-than-two-on-premises-networks-each-connected-to-an-expressroute-circuit-can-i-enable-expressroute-global-reach-to-connect-all-of-my-on-premises-networks-together
 
 ![](https://cldup.com/y7v0IZCyJ5.png)
 
