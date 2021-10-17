@@ -626,11 +626,11 @@ use `kubectl` to interact with the cluster by granting them the `Azure Kubernete
 In order to fullfil the scalability, fine grained access control, availability for the cluster and the container registry,
 the cluster should be deployed with the following features:
 
-- RBAC enabled
+- **RBAC** enabled
 
-- [Azure Active Directory Integration](https://docs.microsoft.com/en-us/azure/aks/managed-aad#before-you-begin) enabled.
+- **[Azure Active Directory Integration](https://docs.microsoft.com/en-us/azure/aks/managed-aad#before-you-begin)** enabled.
 
-- Managed Identities With it, we don't need to authenticate to azure with a service principal created previously, and we avoid keeping an eye on when service principal client secrets expire.
+- **Managed Identities** With they, we don't need to authenticate to azure with a service principal created previously, and we avoid keeping an eye on when service principal client secrets expire.
 Having a managed identity, we could use it to create role assignments over other azure services like Vnet (as I am doing it below), KeyVault and SQL instances, ACR, etcetera
 
 - **3 Availability Zones:** This will allow distribute the AKS nodes [in multiple zones](https://docs.microsoft.com/en-us/azure/aks/availability-zones) in order to have failure tolerance 
@@ -646,12 +646,18 @@ Having a managed identity, we could use it to create role assignments over other
          It replicates data across 3 AZs in a region and then let us recover from zones failures. However, bear in mind this option is just for Premium SSD and 
          Standard SSDs disks. We cannot use Azure Backup or Site Recovery here.
 
-- Virtual Machines Scale sets, they are mandatory when working with Availability Zones. 
+- **Virtual Machines Scale sets**, they are mandatory when working with Availability Zones. 
 These VMs are created across different fault domains into an Availability zone, providing redundant power, cooling, and networking  
 
-- Standard SKU Load Balancer to distribute request across Virtual Machines Scale sets
+- **Azure App Gateway** if we want to get waf capabilities (depending of the app we use), tls termination from there. 
+    - We can also make routing based on the HTTP request, For example if we want to load the images from a specific place, So if `/images` is in the 
+    incoming URL we can route the traffic to a specific pool of backends of VMs or nodes optimized for dealing with images.
+    - We got plenty of features with an azure app gateway, but we can also use just an Standard Load Balancer layer 4 to distribute load across 
+    virtual machines scale sets. All depends of what we need.
 
-- Autoscaling: The cluster will be created with at least 2 nodepools and when possible, the applications will be deployed on user nodepools and not
+- **Standard SKU Load Balancer** to distribute request across Virtual Machines Scale sets, it will be included in the azure app gateway if used
+
+- **Autoscaling**: The cluster will be created with at least 2 nodepools and when possible, the applications will be deployed on user nodepools and not
 on the system nodepool. 
     - Horizontal Pod Autoscaling for increasing/decreasing the number of replicas.
         - We can use here metrics like cpu or memory and define an `HorizontalPodAutoscaler` resource. But we can also create custom metrics and using
@@ -734,27 +740,23 @@ when we don't want specific pods on nodes. For example we have apps doing heavy 
 the normal ones from nodes with high performance hardware.   
 
 
-- Logs Analytics Workspaces and Container Insights (Optional): This is [monitoring for containers](https://docs.microsoft.com/en-gb/azure/azure-monitor/containers/container-insights-overview) 
+- **Logs Analytics Workspaces and Container Insights** (Optional): This is [monitoring for containers](https://docs.microsoft.com/en-gb/azure/azure-monitor/containers/container-insights-overview) 
 in order to track nodes, disks, CPUs. It is not entirely required, it will depends of the observability
 strategy for metrics, logs and tracing collections and tools used. 
 
 
-- Azure CNI Network Plugin
+- **Azure CNI Network Plugin**
     - Allow us to make the pods accessible from on premises network when using Express Route
     - It is required to integrate additional nodepools or virtual nodes
     - Pods and services gets a private IP of the Vnet.
     - We avoid to use NAT to route traffic between pods and nodes (different logical namespace)
 
-- K8s network policies. They are important to:
+- **Calico K8s network policies**. They are important to:
     - [Control traffic to and from K8s pods](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/01-deny-all-traffic-to-an-application.md#deny-all-traffic-to-an-application), because by default pods are not isolated, they accept traffic from any source.
     - Define which containers are allowed to talk to each others
     - Restrict [communication between namespaces](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/04-deny-traffic-from-other-namespaces.md#deny-all-traffic-from-other-namespaces) and pods is also useful to block traffic,
      maybe we want to allow [only the traffic coming from the same namespace the pod is deployed to](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/02a-allow-all-traffic-to-an-application.md#allow-all-traffic-to-an-application).
     - Or maybe we want to [deny egress traffic](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/11-deny-egress-traffic-from-an-application.md#deny-egress-traffic-from-an-application) from a specific application.
-    
-    
-    Azure policies for AKS enabled. It can improve security on pods, restrict access from ip ranges to API, nodes, do not allow privileged containers
-    https://docs.microsoft.com/en-us/azure/aks/policy-reference built-in policies 
     
 
 ---
@@ -902,37 +904,59 @@ So according to the above features description, the AKS cluster has the followin
 
 ---
 
-### 3.3. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
+## 4. Achieving the highest possible uptime for the api and the workers (calculate the SLA and explain it)
 
-kEEP nin mind the end to end solution, not just the aks. I did it with the Express Route circuit,
-consider dependecy of aks with AAD. MAYBE i AM using a db for a stateless app. 
-Those SLAS should be the same or greater than AKS
-- AZ, in a region?
-    - deploy to at least two regions
-I want that level of resiliency in case of a natural disaster, i am not going to impact the other copy of my data
+Here, we have to keep in mind the end to end solution, not just the aks cluster despite the HA and HP efforts there. 
+So we have in the solution the following components:
 
-I wanted to propose a Multiregion deployment with two clusters in westeurope and northeurope and use
-traffic manager, that is possible, but since we are using Express Route, I think is not possible
-to put them to work all together. 
-Indeed is possible use Express Route to redirect or receive traffic from Vnets located in 
-different regions ([by implementing circuits in each of them](https://docs.microsoft.com/en-us/azure/expressroute/expressroute-optimize-routing#suboptimal-routing-between-virtual-networks)) 
-being Traffic Manager a DNS LB and makes use of endpoints to be exposed in order to contact a target 
-to be redirected, and being Express Route a technology that demands involves a Gateway in the cloud Vnet target 
-is not clear for me how to put them to talk each other under networking protocol layer perspective.
+- Express Route Service (Azure), which has these components as an entire solution:
+    - ER Circuit
+    - Microsoft Edge Routers
+    - ER Gateway
+    - VPN Gateway
+- Connectivity Provider backbone
+- Customer Edge Routers 
+- On-premises Network
+    - We could enumerate here the specific services deployed like self hosted runners (terraform, github) or another services 
+- Azure Container Registry
+- Azure App Gateway
 
-
-I will have in some how expose an endpoint of express route gateway or circuit in order
-Traffic manager can redirect a connection attempt from onpremises network. Being Traffic Manager operating
-under layer 7 application and Express Route between 2-5 layers, I thonk is not possible to work with both
-In addition, i didn't find something similar in the documentation.
-That is why I decided to use just one cluster with 3 availability zones across westeurope region and the following features
-Maybe express route global can helps here toconnect to more than 1 on premises network
-https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#i-have-more-than-two-on-premises-networks-each-connected-to-an-expressroute-circuit-can-i-enable-expressroute-global-reach-to-connect-all-of-my-on-premises-networks-together
-
-![](https://cldup.com/y7v0IZCyJ5.png)
+All those components are part of the architecture deployment or infrastructure used to support the solution, 
+so they are components that I don't own ad most of them also would have upstream dependences such as load balancers,
+routers and the network in general terms.
 
 
+Also some components are like hard dependencies, for instance if AAD fails, perhaps it can leads to most of the other components
+become interoperable, and perhaps could be the case if one component fails the system could be still reliable, for instance if the Express Route fail
+the VPN gateway get in charge.
 
-- 
+According to this, we should think about the system as the interconnection of parts and how this interconnection create dependencies between them.
+But also the entire solution as an operational entity, cannot have a higher SLA that the infra and the sum of those parts.
 
----
+- [SLA AKS](https://azure.microsoft.com/en-us/support/legal/sla/kubernetes-service/v1_1/): For customers who have purchased an Azure Kubernetes Service (AKS) Uptime SLA, we guarantee uptime of 99.95% for the Kubernetes API Server for AKS Clusters that use Azure Availability Zones and 99.9% for AKS Clusters that do not use Azure Availability Zones.
+- [SLA Express Route](https://azure.microsoft.com/en-us/support/legal/sla/expressroute/v1_3/):  99.95% ExpressRoute Dedicated Circuit availability.
+- SLA Connectivity Provider, it depends of the [provider selected](https://azure.microsoft.com/en-us/services/expressroute/connectivity-partners/)
+- [SLA Azure Container Registry](https://azure.microsoft.com/en-us/support/legal/sla/container-registry/v1_1/): at least 99.9% of the time Managed Registry will successfully process Registry Transactions
+- [SLA Azure Active Directory](https://azure.microsoft.com/en-us/support/legal/sla/active-directory/v1_1/): 99.99% availability of the Azure Active Directory Basic and Premium services.
+- [SLA App gateway](https://azure.microsoft.com/en-us/support/legal/sla/application-gateway/v1_2/): will be available at least 99.95% of the time.
+- [SLA VPN Gateway](https://azure.microsoft.com/en-us/support/legal/sla/vpn-gateway/v1_4/): 99.95% availability for each Standard, High Performance, Ultra Performance Gateway for ExpressRoute.
+
+
+- **SLA our own on-premises systems**: Here we are talking about SLAs of the stuff I own, my own servers, infrastructure I maintain.
+
+Here something interesting and particular comes up, because I will need to take the above SLAs and also the specific metrics or indicators that 
+I am interested in measure about my own way to configure the architecture in general terms.
+So we are talking that I have to identify metrics I care about, and turn them into SLI to get after that SLOs. 
+
+Which metrics?
+
+Perhaps let's say: I am interested in to know the latency of the self hosted runners when they are used from the pipelines
+to rollout features or consume services. For instance, at the stage 2 of the pipeline, the consumption secrets process should lapse no more than 100 ms
+
+But then to be honest I do not have the sufficient information, elements and more important, knowledge to measure these things
+I wanted to going through [this article](https://www.eventhelix.com/fault-handling/system-reliability-availability/
+) by combining the SLAs infra of the above azure services used in my solution and applying the concepts and equations about
+reliability and availability, but for time reasons I couldn't elaborate accordingly.
+
+I am quite interested in to know how to propose approaches in these situations and how to deal with this.
+
