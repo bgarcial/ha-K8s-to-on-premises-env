@@ -633,8 +633,18 @@ the cluster should be deployed with the following features:
 - Managed Identities With it, we don't need to authenticate to azure with a service principal created previously, and we avoid keeping an eye on when service principal client secrets expire.
 Having a managed identity, we could use it to create role assignments over other azure services like Vnet (as I am doing it below), KeyVault and SQL instances, ACR, etcetera
 
-- 3 Availability Zones: This will allow distribute the AKS nodes [in multiple zones](https://docs.microsoft.com/en-us/azure/aks/availability-zones) in order to have failure tolerance 
+- **3 Availability Zones:** This will allow distribute the AKS nodes [in multiple zones](https://docs.microsoft.com/en-us/azure/aks/availability-zones) in order to have failure tolerance 
 3 Zones is a good practice, just in case 1 fail, the cluster keeps at least 2.
+    - **About Managed Disks and AZs:** In azure, Managed Disks are not be able to be replicated (their content) or being available across zones. 
+      So we cannot point to a disk from a pod in a different zone. If we want to get redundancy for managed disks acros zones, we will have two options: 
+      - [Local Redundant Storage](https://docs.microsoft.com/en-us/azure/virtual-machines/disks-redundancy#locally-redundant-storage-for-managed-disks) 
+      (which can be used with [Azure Site Recovery](https://docs.microsoft.com/en-us/azure/site-recovery/azure-to-azure-how-to-enable-zone-to-zone-disaster-recovery))
+      However it protects the data against server or rack failures. From a zonal failure is necessary to use tools to automate the data sync to two zones
+      and use automatically that zone that is available when the other don't. 
+      
+      - [Zone Redundant Storage](https://docs.microsoft.com/en-us/azure/virtual-machines/disks-redundancy#zone-redundant-storage-for-managed-disks).
+         It replicates data across 3 AZs in a region and then let us recover from zones failures. However, bear in mind this option is just for Premium SSD and 
+         Standard SSDs disks. We cannot use Azure Backup or Site Recovery here.
 
 - Virtual Machines Scale sets, they are mandatory when working with Availability Zones. 
 These VMs are created across different fault domains into an Availability zone, providing redundant power, cooling, and networking  
@@ -735,28 +745,162 @@ strategy for metrics, logs and tracing collections and tools used.
     - Pods and services gets a private IP of the Vnet.
     - We avoid to use NAT to route traffic between pods and nodes (different logical namespace)
 
-- K8s network policies
+- K8s network policies. They are important to:
+    - [Control traffic to and from K8s pods](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/01-deny-all-traffic-to-an-application.md#deny-all-traffic-to-an-application), because by default pods are not isolated, they accept traffic from any source.
+    - Define which containers are allowed to talk to each others
+    - Restrict [communication between namespaces](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/04-deny-traffic-from-other-namespaces.md#deny-all-traffic-from-other-namespaces) and pods is also useful to block traffic,
+     maybe we want to allow [only the traffic coming from the same namespace the pod is deployed to](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/02a-allow-all-traffic-to-an-application.md#allow-all-traffic-to-an-application).
+    - Or maybe we want to [deny egress traffic](https://github.com/ahmetb/kubernetes-network-policy-recipes/blob/master/11-deny-egress-traffic-from-an-application.md#deny-egress-traffic-from-an-application) from a specific application.
+    
+    
     Azure policies for AKS enabled. It can improve security on pods, restrict access from ip ranges to API, nodes, do not allow privileged containers
     https://docs.microsoft.com/en-us/azure/aks/policy-reference built-in policies 
-    - Check how involves here the egress traffic.
-    While whitelisting is generally bad option, we would like to have teams pick 
-    option to use network policies.  
-    What I can mentioned here is enable calico network policy feature on aks, and describe
-    how will be the behavior for restricting egress traffic
-    https://docs.projectcalico.org/about/about-kubernetes-egress 
-    Lets assume that we do not need for this usecase. 
+    
+
+---
+
+### 3.2.  Fixed ingress/egress ips to be able to whitelist this cluster ips from other systems
 
 
-### 3.2. ACR geo-replication and/or availability zones
+The cluster is using Calico Network Policies that allows [a fine graine policy implementation](https://docs.projectcalico.org/security/calico-network-policy)
+It uses the endpoint concept to deal with targets like pods, VMs, among others. 
+
+#### 3.2.1 Using Calico Network Policies for Ingress traffic 
+
+- For instance, we can use Calico network policy, that allow ClusterIPs (from apps or workloads) to be advertised as external IPs (despite ClusterIPs are
+designed for use within the Cluster by pods and services), so [external clients can use them to access services hosted inside the cluster](https://docs.projectcalico.org/security/services-cluster-ips):
+
+>This means that Calico ingress policy can be applied at one or both of the following locations:
+> - Host interface, when the traffic destined for the clusterIP first ingresses the cluster
+> - Pod interface of the backend pod
+
+Calico also control traffic routing to manage whether the traffic is routed to a node local or a cluster-wide endpoint, depending our requirements.
+
+Let's say we want to allow all github actions hosted runners CIDR ranges to our cluster when pipelines get into action.
+(In the same way we can whitelist the github actions selfhosted runners if we have them). 
+
+- I am assuming I need to allow ingress traffic from github actions networks to different nodes (many workloads,namespaces, pods)  in my cluster,
+since dev team might want to work across namespaces under its business domain applications context:
+
+- Let's take the [github actions CIDR ranges](https://api.github.com/meta) (Look for `"actions":` array) 
+  
+  ![](https://cldup.com/TYTMCtRt4b.png)
+  
+  Just to initiate with the first CIDR address range `13.64.0.0/16`.
+  
+  According to the IPV4 CIDR being `/16` as a a prefix, it is a subnet mask `255.255.0.0`
+  - So if we use a subnet calculator, we got this:
+
+  ![](https://cldup.com/j446zviqcQ.png)
+
+  - So we will allow the `13.64.0.0 - 13.64.255.255` CIDR Address range (and the subsequent from github actions) to communicate with our cluster workloads to
+  the some applications and third party services like nginx:
+  
+  ![](https://cldup.com/UkDlqpbnAb.png)
+
+  - and some own applications like a backend API and other third party service like geoserver for publishing geospatial data
+
+  ![](https://cldup.com/cPqKpRmvzY.png)  
+
+```
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-cluster-ips
+spec:
+  selector: k8s-role == 'node'
+  types:
+  - Ingress
+  applyOnForward: true
+  preDNAT: true
+  ingress:
+  # Allow 13.64.0.0/16 to access nginx Cluster IPs 
+  - action: Allow
+    source:
+      nets:
+      - 13.64.0.0/16
+    destination:
+      nets:
+      - 10.0.62.114/8 # nginx Cluster IP LB
+      - 10.0.69.97/8 # nginx Cluster IP Ingress Controller
+      - 10.0.54.162/8 # Backend API
+      - 10.0.136.255/8 # geo server service  
+  # And so on allowing more Github actions range addresses 
+  - action: Allow
+    source:
+      nets:
+      - 13.65.0.0/16
+    destination:
+      nets:
+      - 10.0.62.114/8 # nginx Cluster IP LB
+      - 10.0.69.97/8 # nginx Cluster IP Ingress Controller
+      - 10.0.54.162/8 # Backend API
+      - 10.0.136.255/8 # geo server service 
+```
+**We can also whitelist here the on-premises subnets from the organization, so for instance only the hosted runners will access the cluster.**
+
+- We can also create network policies [to be applied to specific label pods, where we allow egress traffic](https://docs.projectcalico.org/security/external-ips-policy#limit-traffic-to-or-from-external-networks-ips-in-network-policy)
+to external networks by referencing CIDRs ranges (to identify a whole network or a subnet) or IP addresses for a particular instance of a host on the network.
+For instance, let's approve egress traffic from all the pods with the label `color:red` to the Github API CIDR ranges:
+
+```
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-external
+  namespace: production
+spec:
+  selector:
+    color == 'red'
+  types:
+    - Egress
+  egress:    
+    - action: Allow
+      destination:
+        nets:
+        - 192.30.252.0/22
+        - 185.199.108.0/22
+        - 140.82.112.0/20
+        - 143.55.64.0/20
+        - 2a0a:a440::/29
+        - 2606:50c0::/32
+        - 13.230.158.120/32
+        - 18.179.245.253/32
+        - 52.69.239.207/32
+        - 13.209.163.61/32
+        - 54.180.75.25/32
+        - 13.233.76.15/32
+        - 13.234.168.60/32
+        - 13.250.168.23/32
+        - 13.250.94.254/32
+        - 54.169.195.247/32
+        - 13.236.14.80/32
+        - 13.238.54.232/32
+        - 52.63.231.178/32
+        - 18.229.199.252/32
+        - 54.207.47.76/32
+        - 20.201.28.148/32
+        - 20.205.243.168/32
+        - 102.133.202.248/32 
+```
+
+**In addition the on-premises network can be listed here to allow traffic to them from the cluster just if needed.**
+
+--- 
+
+### 3.3. ACR geo-replication and/or availability zones
+
 - Despite the team is located in one region, we can [replicate the container registry data](https://docs.microsoft.com/en-us/azure/container-registry/container-registry-geo-replication) 
 to a close region for fast pulling and resiliency. Each push is automatically place across regions.  
 
-- But if we just want to use a region, we can put the ACR acros the Availability zones in that region
-We are only one region, so we don't need a high available  ACR
-    - Maybe put it across the availability zones that the deployment will have
+- But if we just want to use a region, we can put the ACR acros the Availability zones in that region, like the below diagram:
+- It will be 1 ACR for the team with the above caracteristics.
  
+So according to the above features description, the AKS cluster has the following architecture deployment:
 
-![](https://cldup.com/Ti__gOPZ3v.png)
+![](https://cldup.com/N02dDuQ0Br.png)
+
+---
 
 ### 3.3. - needs to achieve the highest possible uptime for the api and the workers (calculate the SLA and explain it)
 
@@ -788,7 +932,6 @@ https://docs.microsoft.com/en-us/azure/expressroute/expressroute-faqs#i-have-mor
 ![](https://cldup.com/y7v0IZCyJ5.png)
 
 
-### 3.3 Other K8s features
 
 - 
 

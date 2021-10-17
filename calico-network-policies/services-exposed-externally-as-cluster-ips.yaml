@@ -1,0 +1,33 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-cluster-ips
+spec:
+  selector: k8s-role == 'node'
+  types:
+  - Ingress
+  applyOnForward: true
+  preDNAT: true
+  ingress:
+  # Allow 13.64.0.0/16 to access nginx Cluster IPs 
+  - action: Allow
+    source:
+      nets:
+      - 13.64.0.0/16
+    destination:
+      nets:
+      - 10.0.62.114/8 # nginx Cluster IP LB
+      - 10.0.69.97/8 # nginx Cluster IP Ingress Controller
+      - 10.0.54.162/8 # Backend API
+      - 10.0.136.255/8 # geo server service  
+  # And so on allowing more Github actions range addresses 70.80.90.0/24 to access Cluster IP B
+  - action: Allow
+    source:
+      nets:
+      - 13.65.0.0/16
+    destination:
+      nets:
+      - 10.0.62.114/8 # nginx Cluster IP LB
+      - 10.0.69.97/8 # nginx Cluster IP Ingress Controller
+      - 10.0.54.162/8 # Backend API
+      - 10.0.136.255/8 # geo server service 
